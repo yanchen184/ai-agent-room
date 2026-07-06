@@ -6,6 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "demo": "node server.js --demo",
+    "install-hooks": "node scripts/install-hooks.js",
     "test": "node --test"
   },
   "engines": {

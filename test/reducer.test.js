@@ -122,6 +122,38 @@ test('deriveAgents：offline 超過 30 分鐘就從清單移除', () => {
   assert.equal(later.length, 0);
 });
 
+test('deriveAgents：同名專案 basename 撞名時補上層目錄後綴，分得清', () => {
+  let state = emptyState();
+  state = reduce(state, ev('SessionStart', {
+    session_id: 'sA', ts: T0, cwd: '/Users/yanchen/client-a/api',
+  }));
+  state = reduce(state, ev('SessionStart', {
+    session_id: 'sB', ts: T0 + 1, cwd: '/Users/yanchen/client-b/api',
+  }));
+  const names = deriveAgents(state, T0 + 2).map((a) => a.name).sort();
+  assert.deepEqual(names, ['api (client-a)', 'api (client-b)']);
+});
+
+test('deriveAgents：不撞名時名稱維持原樣（畫面零變動）', () => {
+  let state = emptyState();
+  state = reduce(state, ev('SessionStart', {
+    session_id: 'sA', ts: T0, cwd: '/Users/yanchen/workspace/wez-rag',
+  }));
+  state = reduce(state, ev('SessionStart', {
+    session_id: 'sB', ts: T0 + 1, cwd: '/Users/yanchen/workspace/boardgame',
+  }));
+  const names = deriveAgents(state, T0 + 2).map((a) => a.name).sort();
+  assert.deepEqual(names, ['boardgame', 'wez-rag']);
+});
+
+test('deriveAgents：撞名但無上層目錄可用時退回 session 短碼', () => {
+  let state = emptyState();
+  state = reduce(state, ev('SessionStart', { session_id: 'aaaa-1', ts: T0, cwd: '/api' }));
+  state = reduce(state, ev('SessionStart', { session_id: 'bbbb-2', ts: T0 + 1, cwd: '/api' }));
+  const names = deriveAgents(state, T0 + 2).map((a) => a.name).sort();
+  assert.deepEqual(names, ['api (aaaa)', 'api (bbbb)']);
+});
+
 test('活動 feed 記錄事件、上限 50 筆、最新在前', () => {
   let state = emptyState();
   for (let i = 0; i < 60; i++) {
