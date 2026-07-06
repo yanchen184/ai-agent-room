@@ -7,14 +7,14 @@ ctx.imageSmoothingEnabled = false;
 // 工位錨點（背景圖 1536x1024 的比例座標；chair 位置，角色腳點對齊）。
 // 對照 assets/office-bg.png 兩排各三張桌子的實際位置，看圖後微調。
 const DESKS = [
-  { x: 0.235, y: 0.395 },
-  { x: 0.500, y: 0.395 },
-  { x: 0.765, y: 0.395 },
-  { x: 0.235, y: 0.735 },
-  { x: 0.500, y: 0.735 },
-  { x: 0.765, y: 0.735 },
+  { x: 0.247, y: 0.475 },
+  { x: 0.491, y: 0.475 },
+  { x: 0.732, y: 0.475 },
+  { x: 0.247, y: 0.740 },
+  { x: 0.491, y: 0.740 },
+  { x: 0.732, y: 0.740 },
 ];
-const SPRITE_H = 150; // 角色顯示高度 px（畫布座標）
+const SPRITE_H = 190; // 角色顯示高度 px（畫布座標）
 
 // 姿勢表 assets/agent-poses.png：3x2 格。狀態 → 格子索引。
 const POSE = { typing: 0, idle: 1, raise: 2, reading: 3, coffee: 4, sleeping: 5 };
@@ -55,7 +55,48 @@ function loadImage(src) {
   });
 }
 
-// 白底姿勢表 → 去背（近白色轉透明），回傳每格的離屏 canvas。
+// 近白判定（去背門檻）。
+function isNearWhite(px, i) {
+  return px[i] > 232 && px[i + 1] > 232 && px[i + 2] > 232;
+}
+
+// 從邊框 flood-fill 去背：只清除「與邊界相連」的近白背景，
+// 保留角色身體內部的白色（全域 white-key 會把白色機身也挖掉）。
+function keyOutBorderWhite(source, sx, sy, w, h) {
+  const cell = document.createElement('canvas');
+  cell.width = w;
+  cell.height = h;
+  const cctx = cell.getContext('2d');
+  cctx.drawImage(source, sx, sy, w, h, 0, 0, w, h);
+  const data = cctx.getImageData(0, 0, w, h);
+  const px = data.data;
+  const visited = new Uint8Array(w * h);
+  const queue = [];
+  for (let x = 0; x < w; x++) { queue.push(x, (h - 1) * w + x); }
+  for (let y = 0; y < h; y++) { queue.push(y * w, y * w + w - 1); }
+  while (queue.length) {
+    const p = queue.pop();
+    if (visited[p]) continue;
+    visited[p] = 1;
+    if (!isNearWhite(px, p * 4)) continue;
+    px[p * 4 + 3] = 0;
+    const x = p % w;
+    const y = (p / w) | 0;
+    if (x > 0) queue.push(p - 1);
+    if (x < w - 1) queue.push(p + 1);
+    if (y > 0) queue.push(p - w);
+    if (y < h - 1) queue.push(p + w);
+  }
+  cctx.putImageData(data, 0, 0);
+  return cell;
+}
+
+// 白底單張 sprite → 去背後回傳離屏 canvas。
+function keyOutWhite(img) {
+  return keyOutBorderWhite(img, 0, 0, img.width, img.height);
+}
+
+// 白底姿勢表 → 逐格邊框 flood-fill 去背，回傳每格的離屏 canvas。
 function slicePoses(sheet) {
   const cols = 3;
   const rows = 2;
@@ -64,18 +105,7 @@ function slicePoses(sheet) {
   const cells = [];
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      const cell = document.createElement('canvas');
-      cell.width = w;
-      cell.height = h;
-      const cctx = cell.getContext('2d');
-      cctx.drawImage(sheet, c * w, r * h, w, h, 0, 0, w, h);
-      const data = cctx.getImageData(0, 0, w, h);
-      const px = data.data;
-      for (let i = 0; i < px.length; i += 4) {
-        if (px[i] > 235 && px[i + 1] > 235 && px[i + 2] > 235) px[i + 3] = 0;
-      }
-      cctx.putImageData(data, 0, 0);
-      cells.push(cell);
+      cells.push(keyOutBorderWhite(sheet, c * w, r * h, w, h));
     }
   }
   return cells;
@@ -83,6 +113,7 @@ function slicePoses(sheet) {
 
 let bg = null;
 let poses = [];
+let typingSprite = null; // 無桌子的坐姿打字 sprite（優先於姿勢表格 0，避免與背景桌子重疊）
 let agents = [];
 let t = 0;
 
@@ -132,7 +163,8 @@ function render() {
     if (agent.deskIndex === null || agent.status === 'offline') continue;
     const desk = DESKS[agent.deskIndex];
     if (!desk) continue;
-    const cell = poses[poseFor(agent)];
+    const pose = poseFor(agent);
+    const cell = pose === POSE.typing && typingSprite ? typingSprite : poses[pose];
     if (!cell) continue;
     const scale = SPRITE_H / cell.height;
     const w = cell.width * scale;
@@ -140,12 +172,14 @@ function render() {
     const x = desk.x * canvas.width;
     const y = desk.y * canvas.height + bob;
     ctx.drawImage(cell, x - w / 2, y - SPRITE_H / 2, w, SPRITE_H);
-    drawLabel(x, y - SPRITE_H / 2, agent);
+    // 名牌抬到螢幕上方；工具/等待氣泡緊貼名牌下，不丟到腳下（會撞下一排名牌）。
+    const labelY = y - SPRITE_H / 2 - 56;
+    drawLabel(x, labelY, agent);
     if (agent.status === 'working' && agent.currentTool) {
-      drawToolBubble(x, y + SPRITE_H / 2 + 6, agent.currentTool);
+      drawToolBubble(x, labelY + 2, agent.currentTool);
     }
     if (agent.status === 'waiting') {
-      drawToolBubble(x, y + SPRITE_H / 2 + 6, '✋ 需要批准');
+      drawToolBubble(x, labelY + 2, '✋ 需要批准');
     }
   }
   requestAnimationFrame(render);
@@ -213,12 +247,14 @@ async function poll() {
 }
 
 async function main() {
-  const [bgImg, sheet] = await Promise.all([
+  const [bgImg, sheet, typingImg] = await Promise.all([
     loadImage('/assets/office-bg.png'),
     loadImage('/assets/agent-poses.png'),
+    loadImage('/assets/agent-typing.png'),
   ]);
   bg = bgImg;
   if (sheet) poses = slicePoses(sheet);
+  if (typingImg) typingSprite = keyOutWhite(typingImg);
   await poll();
   setInterval(poll, 2000);
   render();
