@@ -88,7 +88,9 @@ export function createDemoFeed(now = Date.now()) {
       const idx = Number(sessionId.split('-')[1]);
       const base = { ts: t, session_id: sessionId, cwd: DEMO_PROJECTS[idx] };
       if (cursor % 5 === 4) {
-        events.push({ ...base, hook_event_name: 'UserPromptSubmit', prompt: pick(PROMPTS, cursor) });
+        // 任務描述固定綁自己的專案（pick by idx 不是 cursor），
+        // 否則同一句任務會輪流掛在不同員工身上，demo 給人看會露餡。
+        events.push({ ...base, hook_event_name: 'UserPromptSubmit', prompt: pick(PROMPTS, idx) });
       } else {
         events.push({ ...base, hook_event_name: 'PreToolUse', tool_name: pick(TOOLS, cursor) });
       }
