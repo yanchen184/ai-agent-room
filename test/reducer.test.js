@@ -91,6 +91,26 @@ test('第 7 位之後 deskIndex 為 null（辦公室只有 6 個工位）', () =
   assert.equal(state.agents['s6'].deskIndex, null);
 });
 
+test('座位釋出後，候補中（deskIndex null）的 agent 下一個事件自動補位', () => {
+  let state = emptyState();
+  for (let i = 0; i < 7; i++) {
+    state = reduce(state, ev('SessionStart', { session_id: `s${i}`, ts: T0 + i }));
+  }
+  assert.equal(state.agents['s6'].deskIndex, null);
+  state = reduce(state, ev('SessionEnd', { session_id: 's0', ts: T0 + 100 }));
+  state = reduce(state, ev('PreToolUse', { session_id: 's6', ts: T0 + 200, tool_name: 'Read' }));
+  assert.equal(state.agents['s6'].deskIndex, 0);
+});
+
+test('亂序事件（ts 早於 lastEventTs）被丟棄，SessionEnd 後不會被舊事件復活', () => {
+  let state = reduce(emptyState(), ev('SessionStart'));
+  state = reduce(state, ev('PreToolUse', { ts: T0 + 5000, tool_name: 'Bash' }));
+  state = reduce(state, ev('SessionEnd', { ts: T0 + 6000 }));
+  const after = reduce(state, ev('PreToolUse', { ts: T0 + 1000, tool_name: 'Edit' }));
+  assert.equal(after.agents['sess-1'].status, STATUS.OFFLINE);
+  assert.equal(after.agents['sess-1'].lastEventTs, T0 + 6000);
+});
+
 test('reduce 不可變：不改動原 state', () => {
   const before = reduce(emptyState(), ev('SessionStart'));
   const frozen = JSON.stringify(before);

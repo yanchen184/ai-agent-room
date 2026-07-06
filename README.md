@@ -58,7 +58,7 @@ npm run install-hooks -- /絕對路徑/到/你的專案
 
 hook 只把事件寫進**你本機**的 `~/.claude/office/events.jsonl`，server 也只在本機聽 port，**不對外傳送任何資料**。prompt 只擷取前 200 字用於畫面顯示，可自行縮短或關掉對應 hook。
 
-> 辦公室只有 **6 個工位**。第 7 位之後的 session 仍會列在右側清單與活動紀錄，但畫面上不佔工位（`deskIndex` 為 `null`）。
+> 辦公室只有 **6 個工位**。第 7 位之後的 session 仍會列在右側清單與活動紀錄，但畫面上不佔工位；等有人下班釋出座位，候補的 session 會在下一個事件自動補位入座。
 
 環境變數：
 

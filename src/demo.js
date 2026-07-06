@@ -45,29 +45,45 @@ export function createDemoFeed(now = Date.now()) {
   // 開場就鋪滿五種狀態，首屏 5 秒內看到全部賣點：
   //   demo-0 working（打字）、demo-1 working（用工具）、demo-2 waiting（舉手等批准）、
   //   demo-3 idle（喝咖啡）、demo-4 sleeping（上面戳在 12 分鐘前）。
+  // 展示位事件的 ts 必須晚於該 session 自己的 UserPromptSubmit（reducer 會丟棄 ts 倒退的亂序事件）。
   events.push({
     ts: startedAt + 3000, hook_event_name: 'PreToolUse',
     session_id: 'demo-1', cwd: DEMO_PROJECTS[1], tool_name: 'Edit',
   });
   events.push({
-    ts: startedAt + 3200, hook_event_name: 'Notification',
+    ts: startedAt + 4600, hook_event_name: 'Notification',
     session_id: 'demo-2', cwd: DEMO_PROJECTS[2], message: '等待權限批准',
   });
   events.push({
-    ts: startedAt + 3400, hook_event_name: 'Stop',
+    ts: startedAt + 6100, hook_event_name: 'Stop',
     session_id: 'demo-3', cwd: DEMO_PROJECTS[3],
   });
 
   let cursor = events.length;
+  let lastTs = startedAt + 6100;
+  let running = emptyState();
 
   // 只讓「演示位」demo-0 / demo-1 動起來製造 working 的工具切換感；
   // demo-2（waiting）、demo-3（idle）、demo-4（sleeping）維持開場鋪好的狀態當展示樣本，
   // 這樣首屏永遠同時看得到五種狀態，又保留一點即時變化。
   const ACTIVE = ['demo-0', 'demo-1'];
+  const STALE_GAP = 10 * 60 * 1000;
 
   function advance(current) {
-    const last = events[events.length - 1].ts;
-    for (let t = last + 4000; t <= current; t += 4000) {
+    if (current - lastTs > STALE_GAP) {
+      // 掛機太久（沒人查詢）：直接快轉到最近一分鐘，不補中間幾萬筆事件，
+      // 並重鋪 waiting / idle 展示位——任何時間點打開頁面都仍是首屏五狀態。
+      lastTs = current - 60_000;
+      events.push({
+        ts: lastTs, hook_event_name: 'Notification',
+        session_id: 'demo-2', cwd: DEMO_PROJECTS[2], message: '等待權限批准',
+      });
+      events.push({
+        ts: lastTs + 100, hook_event_name: 'Stop',
+        session_id: 'demo-3', cwd: DEMO_PROJECTS[3],
+      });
+    }
+    for (let t = lastTs + 4000; t <= current; t += 4000) {
       const sessionId = ACTIVE[cursor % ACTIVE.length];
       const idx = Number(sessionId.split('-')[1]);
       const base = { ts: t, session_id: sessionId, cwd: DEMO_PROJECTS[idx] };
@@ -77,13 +93,19 @@ export function createDemoFeed(now = Date.now()) {
         events.push({ ...base, hook_event_name: 'PreToolUse', tool_name: pick(TOOLS, cursor) });
       }
       cursor += 1;
+      lastTs = t;
     }
   }
 
   return {
     state(current = Date.now()) {
       advance(current);
-      return reduceAll(emptyState(), events);
+      // 增量折疊：只把新事件疊進運行中的狀態，事件陣列不無限成長。
+      if (events.length > 0) {
+        running = reduceAll(running, events);
+        events.length = 0;
+      }
+      return running;
     },
   };
 }

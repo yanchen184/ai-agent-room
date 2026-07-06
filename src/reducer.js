@@ -124,8 +124,16 @@ export function reduce(state, event) {
   if (!event || !event.session_id || !event.hook_event_name || typeof event.ts !== 'number') {
     return state;
   }
+  // 亂序守衛：遲到的舊事件（ts 倒退）一律丟棄，
+  // 否則 SessionEnd 之後補到的舊事件會讓已下線 agent 復活、還可能搶到別人的座位。
+  const existing = state.agents[event.session_id];
+  if (existing && event.ts < existing.lastEventTs) return state;
   const base = ensureAgent(state, event);
-  const updated = applyEvent(base, event);
+  let updated = applyEvent(base, event);
+  // 候補補位：座位滿時進來的 agent（deskIndex null），在有人下班釋出座位後補進去。
+  if (updated.deskIndex === null && updated.status !== STATUS.OFFLINE) {
+    updated = { ...updated, deskIndex: assignDesk(state.agents, event.session_id) };
+  }
   return {
     agents: { ...state.agents, [event.session_id]: updated },
     feed: [feedEntry(updated, event), ...state.feed].slice(0, FEED_LIMIT),
