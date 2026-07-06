@@ -33,6 +33,14 @@ function agentName(event) {
   return base || `agent-${String(event.session_id || '?').slice(0, 6)}`;
 }
 
+// 撞名時的區分後綴：優先用上層目錄（client-a/api vs client-b/api），
+// 沒有上層目錄可用就退回 session 短碼，保證同名專案在畫面上分得清。
+function disambiguator(agent) {
+  const parts = (agent.cwd || '').split('/').filter(Boolean);
+  if (parts.length >= 2) return parts[parts.length - 2];
+  return String(agent.sessionId || '?').slice(0, 4);
+}
+
 function takenDesks(agents, exceptId) {
   return new Set(
     Object.values(agents)
@@ -55,6 +63,7 @@ function ensureAgent(state, event) {
   return {
     sessionId: event.session_id,
     name: agentName(event),
+    cwd: event.cwd || '',
     status: STATUS.IDLE,
     currentTool: null,
     lastPrompt: null,
@@ -126,7 +135,7 @@ export function reduceAll(state, events) {
 
 // 查詢時間相依的呈現層狀態：睡著、離場都是「現在」相對於最後事件推導出來的。
 export function deriveAgents(state, now = Date.now()) {
-  return Object.values(state.agents)
+  const visible = Object.values(state.agents)
     .filter(
       (a) => a.status !== STATUS.OFFLINE || now - a.lastEventTs < REMOVE_OFFLINE_AFTER_MS,
     )
@@ -135,6 +144,13 @@ export function deriveAgents(state, now = Date.now()) {
       const shouldSleep =
         stale && (a.status === STATUS.WORKING || a.status === STATUS.IDLE);
       return shouldSleep ? { ...a, status: STATUS.SLEEPING, currentTool: null } : { ...a };
-    })
+    });
+
+  // 撞名偵測：同一個 basename 出現 ≥2 次時，才補區分後綴，正常情況畫面零變動。
+  const nameCounts = new Map();
+  for (const a of visible) nameCounts.set(a.name, (nameCounts.get(a.name) || 0) + 1);
+
+  return visible
+    .map((a) => (nameCounts.get(a.name) > 1 ? { ...a, name: `${a.name} (${disambiguator(a)})` } : a))
     .sort((x, y) => (x.deskIndex ?? 99) - (y.deskIndex ?? 99));
 }
