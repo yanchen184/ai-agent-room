@@ -33,6 +33,8 @@ npm run demo
 npm start          # 讀 ~/.claude/office/events.jsonl
 ```
 
+> port 4680 被佔用時會直接提示換埠：`PORT=4699 npm run demo`。
+
 ### 讓某個專案的 session 走進辦公室
 
 一行安裝器搞定——不用手改任何路徑：

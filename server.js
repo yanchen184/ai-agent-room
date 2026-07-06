@@ -89,6 +89,14 @@ const server = createServer((req, res) => {
   sendStatic(res, pathname);
 });
 
+server.on('error', (err) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[office] port ${PORT} 已被佔用。換個埠再跑：PORT=4699 npm run demo`);
+    process.exit(1);
+  }
+  throw err;
+});
+
 server.listen(PORT, () => {
   console.log(
     `[office] http://localhost:${PORT}  mode=${DEMO_MODE ? 'demo' : `events:${EVENTS_FILE}`}`,
