@@ -4,7 +4,7 @@
 import { createServer } from 'node:http';
 import { readFileSync, statSync, existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, normalize, sep } from 'node:path';
 import { emptyState, reduceAll, deriveAgents, parseEventLine } from './src/reducer.js';
 import { createDemoFeed } from './src/demo.js';
 
@@ -51,14 +51,20 @@ function sendJson(res, payload) {
   res.end(body);
 }
 
+// 只服務這兩個目錄；其餘（原始碼、設定檔）一律 404。
+const PUBLIC_DIR = join(ROOT, 'public');
+const ASSETS_DIR = join(ROOT, 'assets');
+
 function sendStatic(res, urlPath) {
-  const rel = urlPath === '/' ? '/index.html' : urlPath;
-  const safe = normalize(rel).replace(/^(\.\.[/\\])+/, '');
-  const candidates = [join(ROOT, 'public', safe), join(ROOT, safe)];
-  const filePath = candidates.find(
-    (p) => p.startsWith(ROOT) && existsSync(p) && statSync(p).isFile(),
-  );
-  if (!filePath) {
+  const rel = (urlPath === '/' ? '/index.html' : urlPath).replace(/^\/+/, '');
+  // 前端資產在 public/，圖檔在 assets/（URL 以 assets/ 開頭時對應 repo 根下的 assets/）。
+  const base = rel.startsWith('assets/') ? ROOT : PUBLIC_DIR;
+  // 先 normalize 出真實路徑，再用「目錄 + 分隔符」比真實前綴 —— 擋 ../ 穿越，
+  // 也擋 /public-evil 這種同前綴字串繞過。
+  const filePath = normalize(join(base, rel));
+  const allowed =
+    filePath.startsWith(PUBLIC_DIR + sep) || filePath.startsWith(ASSETS_DIR + sep);
+  if (!allowed || !existsSync(filePath) || !statSync(filePath).isFile()) {
     res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' });
     res.end('not found');
     return;

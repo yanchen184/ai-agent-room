@@ -120,7 +120,10 @@ function feedEntry(agent, event) {
 }
 
 export function reduce(state, event) {
-  if (!event || !event.session_id || !event.hook_event_name) return state;
+  // ts 缺失會讓時間推導（睡眠/移除）算出 NaN 永不觸發，這種事件一律丟棄。
+  if (!event || !event.session_id || !event.hook_event_name || typeof event.ts !== 'number') {
+    return state;
+  }
   const base = ensureAgent(state, event);
   const updated = applyEvent(base, event);
   return {
