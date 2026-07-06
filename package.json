@@ -1,0 +1,14 @@
+{
+  "name": "ai-agent-room",
+  "version": "0.1.0",
+  "description": "Claude Code 視覺化辦公室 — 每個 Claude Code session 是一位辦公室裡的 AI 員工",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "demo": "node server.js --demo",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

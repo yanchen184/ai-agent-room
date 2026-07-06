@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Code Office — AI Agent 視覺化辦公室</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/assets/favicon-32.png">
+<link rel="apple-touch-icon" sizes="180x180" href="/assets/apple-touch-icon.png">
+<style>
+  :root {
+    --bg: #1a1620;
+    --panel: #241f2e;
+    --panel-2: #2d2739;
+    --line: #3a3348;
+    --text: #f0eae0;
+    --muted: #9d94ad;
+    --accent: #e8845c;
+    --working: #5ec46f;
+    --waiting: #eec35b;
+    --idle: #8a97b8;
+    --sleeping: #7a6fd0;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 18px;
+    background: var(--panel);
+    border-bottom: 2px solid var(--line);
+  }
+  header img.logo { width: 28px; height: 28px; image-rendering: pixelated; }
+  header h1 { font-size: 16px; letter-spacing: 1px; }
+  header .sub { color: var(--muted); font-size: 11px; }
+  .spacer { flex: 1; }
+  .badge {
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    color: var(--muted);
+  }
+  .badge.demo { color: var(--waiting); border-color: var(--waiting); display: none; }
+  .badge.online b { color: var(--working); }
+  main { flex: 1; display: flex; min-height: 0; }
+  #stage {
+    flex: 1;
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 14px;
+    min-width: 0;
+  }
+  #office {
+    max-width: 100%;
+    max-height: 100%;
+    image-rendering: pixelated;
+    border-radius: 10px;
+    box-shadow: 0 8px 40px rgba(0,0,0,.45);
+  }
+  #empty-hint {
+    position: absolute;
+    inset: 0;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  #empty-hint .card {
+    background: rgba(26,22,32,.88);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 26px;
+    text-align: center;
+    font-size: 13px;
+    line-height: 2;
+    color: var(--text);
+  }
+  #empty-hint code {
+    background: var(--panel-2);
+    padding: 2px 8px;
+    border-radius: 6px;
+    color: var(--accent);
+  }
+  aside {
+    width: 320px;
+    background: var(--panel);
+    border-left: 2px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  aside h2 {
+    font-size: 12px;
+    letter-spacing: 2px;
+    color: var(--muted);
+    padding: 14px 16px 8px;
+  }
+  #agent-list { padding: 0 12px; overflow-y: auto; max-height: 46%; }
+  .agent-card {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 8px;
+  }
+  .agent-card .row1 { display: flex; align-items: center; gap: 8px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .dot.working { background: var(--working); box-shadow: 0 0 6px var(--working); }
+  .dot.waiting { background: var(--waiting); box-shadow: 0 0 6px var(--waiting); }
+  .dot.idle { background: var(--idle); }
+  .dot.sleeping { background: var(--sleeping); }
+  .agent-card .name { font-size: 13px; font-weight: 700; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status-chip { font-size: 10px; color: var(--muted); }
+  .agent-card .detail {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .agent-card .detail .tool { color: var(--accent); }
+  #feed { flex: 1; overflow-y: auto; padding: 0 12px 12px; border-top: 1px solid var(--line); }
+  .feed-item {
+    display: flex;
+    gap: 8px;
+    font-size: 11px;
+    padding: 6px 4px;
+    border-bottom: 1px dashed var(--line);
+    color: var(--muted);
+  }
+  .feed-item .who { color: var(--text); flex: none; max-width: 90px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .feed-item .what { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .feed-item .when { flex: none; font-size: 10px; }
+  @media (max-width: 860px) {
+    main { flex-direction: column; }
+    aside { width: 100%; max-height: 45%; border-left: none; border-top: 2px solid var(--line); }
+    #agent-list { max-height: none; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <img class="logo" src="/assets/favicon-32.png" alt="">
+    <div>
+      <h1>Claude Code Office</h1>
+      <div class="sub">AI Agent 視覺化辦公室 — 每個 session 都是一位上班中的 AI 員工</div>
+    </div>
+    <div class="spacer"></div>
+    <span class="badge demo" id="demo-badge">DEMO 模式</span>
+    <span class="badge online" id="online-badge">在線 <b id="online-count">0</b> 位</span>
+  </header>
+  <main>
+    <div id="stage">
+      <canvas id="office" width="1536" height="1024"></canvas>
+      <div id="empty-hint">
+        <div class="card">
+          辦公室目前沒有人上班 🌙<br>
+          在裝好 hooks 的專案開一個 Claude Code session，員工就會進場；<br>
+          或先跑 <code>npm run demo</code> 看模擬營運。
+        </div>
+      </div>
+    </div>
+    <aside>
+      <h2>AGENTS</h2>
+      <div id="agent-list"></div>
+      <h2>活動紀錄</h2>
+      <div id="feed"></div>
+    </aside>
+  </main>
+  <script type="module" src="/office.js"></script>
+</body>
+</html>
