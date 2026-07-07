@@ -41,16 +41,26 @@ function disambiguator(agent) {
   return String(agent.sessionId || '?').slice(0, 4);
 }
 
-function takenDesks(agents, exceptId) {
+// 座位是否仍被佔用，判準要跟 deriveAgents 的顯示壽命對齊：
+// offline 但還在 30 分鐘顯示窗內的 agent，畫面上還畫得到，座位就不能被搶走，
+// 否則新人會跟尚未消失的下線者畫在同一張桌子上。只有「已超過移除門檻、
+// 畫面上也不再顯示」的 offline agent 才算真的空出座位。
+function isHoldingDesk(agent, now) {
+  if (agent.deskIndex === null) return false;
+  if (agent.status !== STATUS.OFFLINE) return true;
+  return now - agent.lastEventTs < REMOVE_OFFLINE_AFTER_MS;
+}
+
+function takenDesks(agents, exceptId, now) {
   return new Set(
     Object.values(agents)
-      .filter((a) => a.sessionId !== exceptId && a.status !== STATUS.OFFLINE && a.deskIndex !== null)
+      .filter((a) => a.sessionId !== exceptId && isHoldingDesk(a, now))
       .map((a) => a.deskIndex),
   );
 }
 
-function assignDesk(agents, sessionId) {
-  const taken = takenDesks(agents, sessionId);
+function assignDesk(agents, sessionId, now) {
+  const taken = takenDesks(agents, sessionId, now);
   for (let i = 0; i < DESK_COUNT; i++) {
     if (!taken.has(i)) return i;
   }
@@ -68,7 +78,7 @@ function ensureAgent(state, event) {
     currentTool: null,
     lastPrompt: null,
     toolUses: 0,
-    deskIndex: assignDesk(state.agents, event.session_id),
+    deskIndex: assignDesk(state.agents, event.session_id, event.ts),
     startedAt: event.ts,
     lastEventTs: event.ts,
   };
@@ -132,7 +142,7 @@ export function reduce(state, event) {
   let updated = applyEvent(base, event);
   // 候補補位：座位滿時進來的 agent（deskIndex null），在有人下班釋出座位後補進去。
   if (updated.deskIndex === null && updated.status !== STATUS.OFFLINE) {
-    updated = { ...updated, deskIndex: assignDesk(state.agents, event.session_id) };
+    updated = { ...updated, deskIndex: assignDesk(state.agents, event.session_id, event.ts) };
   }
   return {
     agents: { ...state.agents, [event.session_id]: updated },
@@ -157,11 +167,28 @@ export function deriveAgents(state, now = Date.now()) {
       return shouldSleep ? { ...a, status: STATUS.SLEEPING, currentTool: null } : { ...a };
     });
 
+  // 查詢端候補補位：座位滿時進場的 agent（deskIndex null）若之後沒有再產生
+  // 任何事件，reduce 端不會替它補位，會變成「面板列得出、辦公室看不到人」的幽靈。
+  // 這裡在顯示當下、對仍活著的 null agent 嘗試補進已釋放的空位。
+  const held = new Set(
+    visible.filter((a) => isHoldingDesk(a, now)).map((a) => a.deskIndex),
+  );
+  const seated = visible.map((a) => {
+    if (a.deskIndex !== null || a.status === STATUS.OFFLINE) return a;
+    for (let i = 0; i < DESK_COUNT; i++) {
+      if (!held.has(i)) {
+        held.add(i);
+        return { ...a, deskIndex: i };
+      }
+    }
+    return a;
+  });
+
   // 撞名偵測：同一個 basename 出現 ≥2 次時，才補區分後綴，正常情況畫面零變動。
   const nameCounts = new Map();
-  for (const a of visible) nameCounts.set(a.name, (nameCounts.get(a.name) || 0) + 1);
+  for (const a of seated) nameCounts.set(a.name, (nameCounts.get(a.name) || 0) + 1);
 
-  return visible
+  return seated
     .map((a) => (nameCounts.get(a.name) > 1 ? { ...a, name: `${a.name} (${disambiguator(a)})` } : a))
     .sort((x, y) => (x.deskIndex ?? 99) - (y.deskIndex ?? 99));
 }

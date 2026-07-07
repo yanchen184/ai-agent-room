@@ -59,12 +59,17 @@ test('Stop 轉 idle 並清掉 currentTool', () => {
   assert.equal(agent.currentTool, null);
 });
 
-test('SessionEnd 轉 offline 並釋出座位', () => {
+test('SessionEnd 轉 offline；座位在 30 分鐘顯示窗內仍保留，超時才釋出', () => {
   let state = reduce(emptyState(), ev('SessionStart'));
   state = reduce(state, ev('SessionEnd', { ts: T0 + 1000 }));
   assert.equal(state.agents['sess-1'].status, STATUS.OFFLINE);
-  const s2 = reduce(state, ev('SessionStart', { ts: T0 + 2000, session_id: 'sess-2' }));
-  assert.equal(s2.agents['sess-2'].deskIndex, 0);
+  // 窗內：下線者畫面上還看得到（顯示 30 分鐘），座位不能被搶走，否則會同桌重疊。
+  // 只有 5 桌是唯一空位時新人才可能拿 desk 0；這裡 desk 0 仍被 offline 的 sess-1 佔著。
+  const soon = reduce(state, ev('SessionStart', { ts: T0 + 2000, session_id: 'sess-2' }));
+  assert.equal(soon.agents['sess-2'].deskIndex, 1);
+  // 超時（>30 分鐘）：下線者從畫面消失，座位真正釋出，新人可拿回 desk 0。
+  const later = reduce(state, ev('SessionStart', { ts: T0 + 1000 + 31 * 60 * 1000, session_id: 'sess-3' }));
+  assert.equal(later.agents['sess-3'].deskIndex, 0);
 });
 
 test('沒 SessionStart 先來 PreToolUse 也會自動建 agent（容錯）', () => {
@@ -91,15 +96,19 @@ test('第 7 位之後 deskIndex 為 null（辦公室只有 6 個工位）', () =
   assert.equal(state.agents['s6'].deskIndex, null);
 });
 
-test('座位釋出後，候補中（deskIndex null）的 agent 下一個事件自動補位', () => {
+test('候補中（deskIndex null）的 agent 在下線者座位真正釋出後（超過顯示窗）自動補位', () => {
   let state = emptyState();
   for (let i = 0; i < 7; i++) {
     state = reduce(state, ev('SessionStart', { session_id: `s${i}`, ts: T0 + i }));
   }
   assert.equal(state.agents['s6'].deskIndex, null);
   state = reduce(state, ev('SessionEnd', { session_id: 's0', ts: T0 + 100 }));
-  state = reduce(state, ev('PreToolUse', { session_id: 's6', ts: T0 + 200, tool_name: 'Read' }));
-  assert.equal(state.agents['s6'].deskIndex, 0);
+  // 窗內：s0 雖下線但畫面上還在，座位仍被佔，候補的 s6 補不到（避免同桌）。
+  const inWindow = reduce(state, ev('PreToolUse', { session_id: 's6', ts: T0 + 200, tool_name: 'Read' }));
+  assert.equal(inWindow.agents['s6'].deskIndex, null);
+  // 超時：s0 的座位真正釋出，s6 這個事件補進 desk 0。
+  const afterWindow = reduce(state, ev('PreToolUse', { session_id: 's6', ts: T0 + 100 + 31 * 60 * 1000, tool_name: 'Read' }));
+  assert.equal(afterWindow.agents['s6'].deskIndex, 0);
 });
 
 test('亂序事件（ts 早於 lastEventTs）被丟棄，SessionEnd 後不會被舊事件復活', () => {
@@ -181,4 +190,41 @@ test('活動 feed 記錄事件、上限 50 筆、最新在前', () => {
   }
   assert.equal(state.feed.length, 50);
   assert.equal(state.feed[0].ts, T0 + 59);
+});
+
+// --- Blocker 迴歸測試（review-sa 審出的三個上線阻擋項）---
+
+test('B1 迴歸：下線者仍在顯示窗內時，新人不會被分到同一張桌（避免同桌重疊）', () => {
+  let state = emptyState();
+  for (let i = 0; i < 6; i++) {
+    state = reduce(state, ev('SessionStart', { session_id: `b${i}`, ts: T0 + i }));
+  }
+  state = reduce(state, ev('SessionEnd', { session_id: 'b0', ts: T0 + 10 }));
+  state = reduce(state, ev('SessionStart', { session_id: 'b6', ts: T0 + 20 }));
+  const shown = deriveAgents(state, T0 + 21);
+  const b0 = shown.find((a) => a.sessionId === 'b0'); // offline 仍顯示
+  const b6 = shown.find((a) => a.sessionId === 'b6'); // 新進場
+  // b0 佔著 desk 0（顯示窗內），6 桌已滿，b6 只能是 null，絕不能跟 b0 同桌。
+  assert.equal(b0.deskIndex, 0);
+  assert.equal(b6.deskIndex, null);
+  const desks = shown.map((a) => a.deskIndex).filter((d) => d !== null);
+  assert.equal(new Set(desks).size, desks.length); // 無重複座位
+});
+
+test('B2 迴歸：候補 agent 即使自身沒有新事件，顯示時也會補進已釋出的空位（不留幽靈）', () => {
+  let state = emptyState();
+  for (let i = 0; i < 7; i++) {
+    state = reduce(state, ev('SessionStart', { session_id: `c${i}`, ts: T0 + i }));
+  }
+  assert.equal(state.agents['c6'].deskIndex, null); // 第 7 人候補
+  state = reduce(state, ev('SessionEnd', { session_id: 'c0', ts: T0 + 100 }));
+  // c0 座位超時釋出後，c6 自身沒有再產生任何事件 —— deriveAgents 仍應在顯示時替它補位。
+  const shown = deriveAgents(state, T0 + 100 + 31 * 60 * 1000);
+  const c6 = shown.find((a) => a.sessionId === 'c6');
+  assert.ok(c6, 'c6 仍在清單');
+  assert.notEqual(c6.deskIndex, null); // 不再是幽靈
+  const seated = shown.filter((a) => a.status !== STATUS.OFFLINE);
+  assert.ok(seated.every((a) => a.deskIndex !== null), '顯示中的活人都有座位');
+  const desks = seated.map((a) => a.deskIndex);
+  assert.equal(new Set(desks).size, desks.length); // 補位不撞座
 });
