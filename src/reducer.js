@@ -154,12 +154,41 @@ export function reduceAll(state, events) {
   return events.reduce((acc, event) => reduce(acc, event), state);
 }
 
+// 同一專案（cwd）多開幾個 session 時，畫面只留一位員工，避免一排同名墓碑：
+// 有活著的 session 就留「最新那個活人」，全都下線了才留「最新那個 offline」（下班了還看得到）。
+// cwd 為空的退化情況以 sessionId 當鍵，維持各自獨立不被誤併。
+//
+// 假設：同一實體專案的 cwd 字串完全相等才會被併。這成立是因為所有事件都由同一份
+// office-hook.js 產生，cwd 格式一致（Claude Code 給的絕對路徑）。若之後 cwd 來源變雜
+// （尾斜線 / 大小寫 / ~ 展開差異），這裡要改成先正規化再當鍵。
+function dedupeByProject(agents) {
+  const best = new Map();
+  for (const a of agents) {
+    const key = a.cwd || `__sess__${a.sessionId}`;
+    const prev = best.get(key);
+    if (!prev) {
+      best.set(key, a);
+      continue;
+    }
+    const aAlive = a.status !== STATUS.OFFLINE;
+    const prevAlive = prev.status !== STATUS.OFFLINE;
+    // 活人優先於下線者；同為活人或同為下線時，取事件較新的那個。
+    if (aAlive !== prevAlive) {
+      if (aAlive) best.set(key, a);
+    } else if (a.lastEventTs > prev.lastEventTs) {
+      best.set(key, a);
+    }
+  }
+  return [...best.values()];
+}
+
 // 查詢時間相依的呈現層狀態：睡著、離場都是「現在」相對於最後事件推導出來的。
 export function deriveAgents(state, now = Date.now()) {
-  const visible = Object.values(state.agents)
-    .filter(
+  const visible = dedupeByProject(
+    Object.values(state.agents).filter(
       (a) => a.status !== STATUS.OFFLINE || now - a.lastEventTs < REMOVE_OFFLINE_AFTER_MS,
-    )
+    ),
+  )
     .map((a) => {
       const stale = now - a.lastEventTs > SLEEP_AFTER_MS;
       const shouldSleep =

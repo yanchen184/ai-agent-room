@@ -98,7 +98,24 @@ server.on('error', (err) => {
 });
 
 server.listen(PORT, () => {
-  console.log(
-    `[office] http://localhost:${PORT}  mode=${DEMO_MODE ? 'demo' : `events:${EVENTS_FILE}`}`,
-  );
+  console.log(`[office] http://localhost:${PORT}`);
+  if (DEMO_MODE) {
+    console.log('[office] 模式：DEMO（內建模擬事件，看不到你的真實 session）');
+    return;
+  }
+  // 真實模式：把「server 讀哪個事件檔」印清楚——hook 寫的檔必須是同一個，
+  // 否則會出現「session 明明在工作、辦公室卻永遠睡著」的幽靈睡眠（各寫各讀）。
+  console.log(`[office] 模式：真實　事件檔：${EVENTS_FILE}`);
+  if (process.env.CLAUDE_OFFICE_EVENTS) {
+    console.log(
+      '[office] ⚠️  你用 CLAUDE_OFFICE_EVENTS 指定了非預設事件檔；' +
+        '請確認各專案的 hook 也用「同一個」路徑，否則辦公室會看不到 session（幽靈睡眠）。',
+    );
+  }
+  if (!existsSync(EVENTS_FILE)) {
+    console.log(
+      `[office] ℹ️  事件檔尚不存在。裝好 hooks 的專案開一個 session 送訊息後，` +
+        `${EVENTS_FILE} 會自動長出來，員工就會進辦公室。`,
+    );
+  }
 });
